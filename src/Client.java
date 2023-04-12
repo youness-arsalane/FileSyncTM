@@ -10,21 +10,19 @@ public class Client {
     private static final int SERVER_PORT = 5656;
 
     public static void main(String[] args) throws Exception {
-//        System.out.println("Enter your working directory:");
-//        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-//        String clientDirectory = reader.readLine();
-//
-//        File clientDirectoryFile = new File(clientDirectory);
-//
-//        if (!clientDirectoryFile.exists()) {
-//            throw new Exception("Path not found.");
-//        } else if (!clientDirectoryFile.isDirectory()) {
-//            throw new Exception("Path is not a directory.");
-//        }
-//
-//        System.out.println("Path is validated.");
+        System.out.println("Enter your working directory:");
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+        String clientDirectory = reader.readLine();
 
-        String clientDirectory = "C:\\Users\\youne\\Desktop\\ClientFiles\\";
+        File clientDirectoryFile = new File(clientDirectory);
+
+        if (!clientDirectoryFile.exists()) {
+            throw new Exception("Path not found.");
+        } else if (!clientDirectoryFile.isDirectory()) {
+            throw new Exception("Path is not a directory.");
+        }
+
+        System.out.println("Path is validated.");
 
         try {
             System.out.println("Connecting to server...");
