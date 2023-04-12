@@ -2,11 +2,12 @@ import java.io.*;
 import java.net.*;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class Client {
-    private static final int SERVER_PORT = 12345;
+    private static final int SERVER_PORT = 5656;
 
     public static void main(String[] args) throws Exception {
 //        System.out.println("Enter your working directory:");
@@ -38,6 +39,7 @@ public class Client {
 }
 
 class ServerThread implements Runnable {
+    private final int intervalSeconds = 5;
     private final String directory;
     private final ArrayList<String> clientFiles;
     private Socket clientSocket;
@@ -63,7 +65,7 @@ class ServerThread implements Runnable {
         while (true) {
             try {
                 checkForChanges();
-                TimeUnit.SECONDS.sleep(5);
+                TimeUnit.SECONDS.sleep(intervalSeconds);
             } catch (IOException | InterruptedException e) {
                 e.printStackTrace();
             }
@@ -74,20 +76,23 @@ class ServerThread implements Runnable {
         objectOutputStream.writeObject("LIST");
         objectOutputStream.writeObject("");
 
-        ArrayList<String> filenames =  new ArrayList<>();
+        ArrayList<String> serverFilenamesData =  new ArrayList<>();
         while (true) {
             String filenameData = (String)objectInputStream.readObject();
             if (filenameData.equals("LIST_END")) {
                 break;
             }
 
-            filenames.add(filenameData);
+            serverFilenamesData.add(filenameData);
         }
 
-        for (String filenameData : filenames) {
+        ArrayList<String> serverFilenames =  new ArrayList<>();
+        for (String filenameData : serverFilenamesData) {
             String[] filenameArguments = filenameData.split(" ");
             String typePrefix = filenameArguments[0];
             String filename = filenameArguments[1];
+
+            serverFilenames.add(filename);
 
             File file = new File(directory + filename);
             if (file.exists()) {
@@ -102,6 +107,23 @@ class ServerThread implements Runnable {
                 case "DIR":
                     file.mkdir();
                     break;
+            }
+        }
+
+
+        for (String clientFile : clientFiles) {
+            if (serverFilenames.contains(clientFile)) {
+                continue;
+            }
+
+            File file = new File(directory + clientFile);
+            if (file.isDirectory()) {
+                createFolder(clientFile);
+            } else {
+                try {
+                    uploadFile(clientFile);
+                } catch (FileNotFoundException e) {
+                }
             }
         }
     }
@@ -122,14 +144,27 @@ class ServerThread implements Runnable {
 
         Collections.sort(clientFiles);
         for (String filename : newClientFiles) {
+            File file = new File(directory + filename);
+
             if (!clientFiles.contains(filename)) {
-                if (new File(directory + filename).isDirectory()) {
+                if (file.isDirectory()) {
                     createFolder(filename);
                 } else {
-                    uploadFile(filename);
+                    try {
+                        uploadFile(filename);
+                    } catch (FileNotFoundException e) {
+                        continue;
+                    }
                 }
 
                 toAdd.add(filename);
+            } else if (!file.isDirectory()) {
+                long lastModified = file.lastModified();
+                Date currentDate = new java.util.Date();
+
+                if (currentDate.getTime() - (intervalSeconds * 1000) <= lastModified) {
+                    uploadFile(filename);
+                }
             }
         }
 
@@ -162,20 +197,35 @@ class ServerThread implements Runnable {
         System.out.println("Downloaded file '" + filename + "' from server.");
     }
 
-    private void uploadFile(String filename) throws IOException {
+    private void uploadFile(String filename) throws IOException, FileNotFoundException {
+        String filePath = directory + filename;
+        File file = new File(filePath);
+
+        FileInputStream fileInputStream = new FileInputStream(filePath);
+
         objectOutputStream.writeObject("UPLOAD");
         objectOutputStream.flush();
         objectOutputStream.writeObject(filename);
         objectOutputStream.flush();
 
-        String filePath = directory + filename;
-        FileInputStream fileInputStream = new FileInputStream(filePath);
-
         byte[] buffer = new byte[clientSocket.getReceiveBufferSize()];
+        float filesize = file.length();
+        float chunks = filesize / (float) buffer.length;
+        if (chunks < 1.0F) {
+            chunks = 1.0F;
+        }
         int bytesRead;
+        int chunkIndex = 0;
+
         while ((bytesRead = fileInputStream.read(buffer)) != -1) {
             objectOutputStream.write(buffer, 0, bytesRead);
+            chunkIndex++;
+
+            float percentage = chunkIndex / chunks * 100;
+            progressBar((int) percentage);
         }
+
+        System.out.println('\n');
 
         fileInputStream.close();
         objectOutputStream.flush();
@@ -227,5 +277,19 @@ class ServerThread implements Runnable {
         clientSocket = new Socket("localhost", clientSocket.getPort());
         objectOutputStream = new ObjectOutputStream(clientSocket.getOutputStream());
         objectInputStream = new ObjectInputStream(clientSocket.getInputStream());
+    }
+
+    public static void progressBar(int percentage) {
+        int length = 26;
+        int filledLength = (int) (percentage / 100.0 * length);
+        int remainingLength = length - filledLength;
+
+        String sb = '\r' +
+                String.format("%3d%% [", percentage) +
+                "=".repeat(Math.max(0, filledLength)) +
+                " ".repeat(Math.max(0, remainingLength)) +
+                ']';
+
+        System.out.print(sb);
     }
 }
