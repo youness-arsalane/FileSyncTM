@@ -82,14 +82,6 @@ class ClientHandler implements Runnable {
         clientSocketObject.setObjectInputStream(objectInputStream);
     }
 
-    private void printEvent(String event, boolean isError) {
-        if (isError) {
-            System.err.println("Client #" + clientSocketObject.getId() + " - " + event);
-        } else {
-            System.out.println("Client #" + clientSocketObject.getId() + " - " + event);
-        }
-    }
-
     public void run() {
         try {
             while (true) {
@@ -97,31 +89,31 @@ class ClientHandler implements Runnable {
                     String command = (String) objectInputStream.readObject();
                     String filename = (String) objectInputStream.readObject();
 
-                    printEvent("Received command: " + command, false);
+                    printClientEvent("Received command: " + command, false);
                     switch (command) {
                         case "LIST":
                             listFiles();
-                            printEvent("Listed files", false);
+                            printClientEvent("Listed files", false);
                             break;
                         case "UPLOAD":
                             receiveFile(filename);
                             break;
                         case "DOWNLOAD":
                             sendFile(filename);
-                            printEvent("Sent file: '" + filename + "'", false);
+                            printClientEvent("Sent file: '" + filename + "'", false);
                             break;
                         case "CREATE_FOLDER":
                             createFolder(filename);
-                            printEvent("Created folder: '" + filename + "'", false);
+                            printClientEvent("Created folder: '" + filename + "'", false);
                             break;
                         case "DELETE":
                             deleteFile(filename);
-                            printEvent("Deleted: '" + filename + "'", false);
+                            printClientEvent("Deleted: '" + filename + "'", false);
                             break;
                     }
                 } catch (SocketException e) {
                     server.removeClient(clientSocketObject.getId());
-                    printEvent("Disconnected", false);
+                    printClientEvent("Disconnected", false);
                     break;
                 } catch (ClassNotFoundException e) {
                     throw new RuntimeException(e);
@@ -158,7 +150,7 @@ class ClientHandler implements Runnable {
     }
 
     private void receiveFile(String filename) throws IOException {
-        printEvent("Receiving file '" + filename + "'...", false);
+        printClientEvent("Receiving file '" + filename + "'...", false);
         FileOutputStream fileOutputStream = null;
 
         try {
@@ -176,7 +168,7 @@ class ClientHandler implements Runnable {
 
             fileOutputStream.close();
 
-            printEvent("Received file '" + filename + "'", false);
+            printClientEvent("Received file '" + filename + "'", false);
 
         } catch (IOException e) {
             if (fileOutputStream != null) {
@@ -189,9 +181,9 @@ class ClientHandler implements Runnable {
                 File file = new File(serverDirectory + filename);
                 if (file.exists()) {
                     if (!file.delete()) {
-                        printEvent("Corrupt file '" + filename + "' could not be deleted.", true);
+                        printClientEvent("Corrupt file '" + filename + "' could not be deleted.", true);
                     } else {
-                        printEvent("Deleted corrupt filename '" + filename + "'", false);
+                        printClientEvent("Deleted corrupt filename '" + filename + "'", false);
                     }
                 }
             }
@@ -275,6 +267,14 @@ class ClientHandler implements Runnable {
 
         Collections.sort(clientFiles);
         return clientFiles;
+    }
+
+    private void printClientEvent(String event, boolean isError) {
+        if (isError) {
+            System.err.println("Client #" + clientSocketObject.getId() + " - " + event);
+        } else {
+            System.out.println("Client #" + clientSocketObject.getId() + " - " + event);
+        }
     }
 }
 
