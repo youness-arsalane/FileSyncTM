@@ -1,9 +1,6 @@
 import java.io.*;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class Client {
@@ -13,6 +10,11 @@ public class Client {
         System.out.println("Enter your working directory:");
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         String clientDirectory = reader.readLine();
+
+        clientDirectory = clientDirectory.replace("/", "\\");
+        if (!clientDirectory.endsWith("\\")) {
+            clientDirectory += "\\";
+        }
 
         File clientDirectoryFile = new File(clientDirectory);
 
@@ -74,9 +76,9 @@ class ServerThread implements Runnable {
         objectOutputStream.writeObject("LIST");
         objectOutputStream.writeObject("");
 
-        ArrayList<String> serverFilenamesData =  new ArrayList<>();
+        ArrayList<String> serverFilenamesData = new ArrayList<>();
         while (true) {
-            String filenameData = (String)objectInputStream.readObject();
+            String filenameData = (String) objectInputStream.readObject();
             if (filenameData.equals("LIST_END")) {
                 break;
             }
@@ -84,7 +86,7 @@ class ServerThread implements Runnable {
             serverFilenamesData.add(filenameData);
         }
 
-        ArrayList<String> serverFilenames =  new ArrayList<>();
+        ArrayList<String> serverFilenames = new ArrayList<>();
         for (String filenameData : serverFilenamesData) {
             String[] filenameArguments = filenameData.split(" ");
             String typePrefix = filenameArguments[0];
@@ -107,7 +109,6 @@ class ServerThread implements Runnable {
                     break;
             }
         }
-
 
         for (String clientFile : clientFiles) {
             if (serverFilenames.contains(clientFile)) {
@@ -161,7 +162,10 @@ class ServerThread implements Runnable {
                 Date currentDate = new java.util.Date();
 
                 if (currentDate.getTime() - (intervalSeconds * 1000) <= lastModified) {
-                    uploadFile(filename);
+                    try {
+                        uploadFile(filename);
+                    } catch (FileNotFoundException e) {
+                    }
                 }
             }
         }
@@ -171,7 +175,7 @@ class ServerThread implements Runnable {
         Collections.sort(clientFiles);
     }
 
-    private void downloadFile(String filename) throws IOException, ClassNotFoundException {
+    private void downloadFile(String filename) throws IOException {
         objectOutputStream.writeObject("DOWNLOAD");
         objectOutputStream.flush();
         objectOutputStream.writeObject(filename);
@@ -190,12 +194,10 @@ class ServerThread implements Runnable {
         fileOutputStream.flush();
         fileOutputStream.close();
 
-        reinitializeConnection();
-
         System.out.println("Downloaded file '" + filename + "' from server.");
     }
 
-    private void uploadFile(String filename) throws IOException, FileNotFoundException {
+    private void uploadFile(String filename) throws IOException {
         String filePath = directory + filename;
         File file = new File(filePath);
 
@@ -215,8 +217,11 @@ class ServerThread implements Runnable {
         int bytesRead;
         int chunkIndex = 0;
 
+        objectOutputStream.writeLong(file.length());
+
         while ((bytesRead = fileInputStream.read(buffer)) != -1) {
             objectOutputStream.write(buffer, 0, bytesRead);
+            objectOutputStream.flush();
             chunkIndex++;
 
             float percentage = chunkIndex / chunks * 100;
@@ -226,7 +231,6 @@ class ServerThread implements Runnable {
         System.out.println('\n');
 
         fileInputStream.close();
-        objectOutputStream.flush();
 
         System.out.println("Uploaded file '" + filename + "' to server.");
     }
@@ -266,15 +270,6 @@ class ServerThread implements Runnable {
 
         Collections.sort(clientFiles);
         return clientFiles;
-    }
-
-    private void reinitializeConnection() throws IOException {
-        objectOutputStream.close();
-        objectInputStream.close();
-        clientSocket.close();
-        clientSocket = new Socket("localhost", clientSocket.getPort());
-        objectOutputStream = new ObjectOutputStream(clientSocket.getOutputStream());
-        objectInputStream = new ObjectInputStream(clientSocket.getInputStream());
     }
 
     public static void progressBar(int percentage) {

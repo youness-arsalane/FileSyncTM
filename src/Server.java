@@ -4,7 +4,7 @@ import java.util.*;
 
 public class Server {
     private static final int PORT = 5656;
-    private Map<Integer, Socket> clientSockets;
+    private final Map<Integer, ClientSocketObject> clientSockets;
 
     public Server() {
         clientSockets = new HashMap<>();
@@ -29,11 +29,13 @@ public class Server {
             int currentSocketID = 1;
 
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientSockets.put(currentSocketID, clientSocket);
-                System.out.println("New client connected: #" + currentSocketID + " (" + clientSocket.getInetAddress() + ")");
+                Socket socket = serverSocket.accept();
+                ClientSocketObject clientSocketObject = new ClientSocketObject(currentSocketID, socket);
 
-                Thread thread = new Thread(new ClientHandler(currentSocketID, this, serverSocket, serverDirectory, clientSocket));
+                clientSockets.put(clientSocketObject.getId(), clientSocketObject);
+                System.out.println("New client connected: #" + clientSocketObject.getId() + " (" + socket.getInetAddress() + ")");
+
+                Thread thread = new Thread(new ClientHandler(clientSocketObject, this, serverDirectory));
                 thread.start();
 
                 currentSocketID++;
@@ -45,81 +47,81 @@ public class Server {
         }
     }
 
-    public void removeClient(int clientSocketID) {
-        clientSockets.remove(clientSocketID);
-    }
-
-    public Map<Integer, Socket> getClients() {
+    public Map<Integer, ClientSocketObject> getClients() {
         return clientSockets;
     }
 
-    public Map<Integer, Socket> getOtherClients(int currentClientSocketID) {
-        Map<Integer, Socket> clients = getClients();
+    public Map<Integer, ClientSocketObject> getOtherClients(int currentClientSocketID) {
+        Map<Integer, ClientSocketObject> clients = getClients();
         clients.remove(currentClientSocketID);
         return clients;
+    }
+
+    public void removeClient(int clientSocketID) {
+        clientSockets.remove(clientSocketID);
     }
 }
 
 class ClientHandler implements Runnable {
-    private int clientSocketID;
-    private Server server;
-    private final ServerSocket serverSocket;
+    private final ClientSocketObject clientSocketObject;
+    private final Server server;
     private final String serverDirectory;
-    private Socket clientSocket;
-    private ObjectOutputStream objectOutputStream;
-    private ObjectInputStream objectInputStream;
+    private final Socket clientSocket;
+    private final ObjectOutputStream objectOutputStream;
+    private final ObjectInputStream objectInputStream;
 
-    public ClientHandler(int clientSocketID, Server server, ServerSocket serverSocket, String serverDirectory, Socket clientSocket) throws IOException {
-        this.clientSocketID = clientSocketID;
+    public ClientHandler(ClientSocketObject clientSocketObject, Server server, String serverDirectory) throws IOException {
+        this.clientSocketObject = clientSocketObject;
         this.server = server;
-        this.serverSocket = serverSocket;
         this.serverDirectory = serverDirectory;
-
-        this.clientSocket = clientSocket;
+        this.clientSocket = clientSocketObject.getSocket();
         this.objectOutputStream = new ObjectOutputStream(clientSocket.getOutputStream());
         this.objectInputStream = new ObjectInputStream(clientSocket.getInputStream());
+
+        clientSocketObject.setObjectOutputStream(objectOutputStream);
+        clientSocketObject.setObjectInputStream(objectInputStream);
+    }
+
+    private void printEvent(String event, boolean isError) {
+        if (isError) {
+            System.err.println("Client #" + clientSocketObject.getId() + " - " + event);
+        } else {
+            System.out.println("Client #" + clientSocketObject.getId() + " - " + event);
+        }
     }
 
     public void run() {
         try {
-            clientInputLoop:
             while (true) {
                 try {
-                    String command = (String)objectInputStream.readObject();
-                    String filename = (String)objectInputStream.readObject();
+                    String command = (String) objectInputStream.readObject();
+                    String filename = (String) objectInputStream.readObject();
 
-                    System.out.println("Received command from client #" + clientSocketID + ": " + command);
+                    printEvent("Received command: " + command, false);
                     switch (command) {
                         case "LIST":
                             listFiles();
-                            System.out.println(" - Listed files to client #" + clientSocketID);
+                            printEvent("Listed files", false);
                             break;
                         case "UPLOAD":
                             receiveFile(filename);
                             break;
                         case "DOWNLOAD":
                             sendFile(filename);
-                            System.out.println(" - Sent file '" + filename + "' to client #" + clientSocketID);
+                            printEvent("Sent file: '" + filename + "'", false);
                             break;
                         case "CREATE_FOLDER":
                             createFolder(filename);
-                            System.out.println(" - Created folder '" + filename + "'");
+                            printEvent("Created folder: '" + filename + "'", false);
                             break;
                         case "DELETE":
                             deleteFile(filename);
-                            System.out.println(" - Deleted '" + filename + "'");
+                            printEvent("Deleted: '" + filename + "'", false);
                             break;
-                        case "DONE":
-                            System.out.println(" - File synchronization complete for client #" + clientSocketID);
-                            clientSocket.close();
-                            objectInputStream.close();
-                            objectOutputStream.close();
-
-                            break clientInputLoop;
                     }
                 } catch (SocketException e) {
-                    System.out.println("Client disconnected: #" + clientSocketID);
-                    server.removeClient(clientSocketID);
+                    server.removeClient(clientSocketObject.getId());
+                    printEvent("Disconnected", false);
                     break;
                 } catch (ClassNotFoundException e) {
                     throw new RuntimeException(e);
@@ -156,6 +158,7 @@ class ClientHandler implements Runnable {
     }
 
     private void receiveFile(String filename) throws IOException {
+        printEvent("Receiving file '" + filename + "'...", false);
         FileOutputStream fileOutputStream = null;
 
         try {
@@ -165,13 +168,15 @@ class ClientHandler implements Runnable {
             byte[] buffer = new byte[clientSocket.getReceiveBufferSize()];
             int bytesRead;
 
-            while ((bytesRead = objectInputStream.read(buffer)) != -1) {
+            long size = objectInputStream.readLong();
+            while (size > 0 && (bytesRead = objectInputStream.read(buffer, 0, (int) Math.min(buffer.length, size))) != -1) {
                 fileOutputStream.write(buffer, 0, bytesRead);
+                size -= bytesRead;
             }
 
             fileOutputStream.close();
 
-            System.out.println(" - Received file '" + filename + "' from client #" + clientSocketID);
+            printEvent("Received file '" + filename + "'", false);
 
         } catch (IOException e) {
             if (fileOutputStream != null) {
@@ -184,32 +189,45 @@ class ClientHandler implements Runnable {
                 File file = new File(serverDirectory + filename);
                 if (file.exists()) {
                     if (!file.delete()) {
-                        System.err.println(" - Corrupt file '" + filename + "' could not be deleted.");
+                        printEvent("Corrupt file '" + filename + "' could not be deleted.", true);
                     } else {
-                        System.out.println(" - Deleted corrupt filename '" + filename + "'");
+                        printEvent("Deleted corrupt filename '" + filename + "'", false);
                     }
                 }
             }
         }
 
-
+//        sendNotificationToOtherClients("DOWNLOAD", filename);
     }
 
-    private void sendNotificationToOtherClients(String command, String filename)
-    {
-        Map<Integer, Socket> otherClients = server.getOtherClients(clientSocketID);
+    private void sendNotificationToOtherClients(String command, String filename) throws IOException {
+        Map<Integer, ClientSocketObject> otherClients = server.getOtherClients(clientSocketObject.getId());
         System.out.println(" - Notifying other clients (" + otherClients.size() + ")...");
 
-        for (Map.Entry<Integer, Socket> entry : otherClients.entrySet()) {
+        for (Map.Entry<Integer, ClientSocketObject> entry : otherClients.entrySet()) {
             Integer key = entry.getKey();
-            Object otherClientSocket = entry.getValue();
+            ClientSocketObject otherClientSocket = entry.getValue();
             /* TODO: notify other clients to download file */
+
+            while (otherClientSocket.isBusy()) {
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            otherClientSocket.getObjectOutputStream().writeObject(command + " " + filename);
+            otherClientSocket.getObjectOutputStream().flush();
+
             System.out.println("#" + key.toString());
             System.out.println(otherClientSocket);
         }
     }
 
     private void sendFile(String filename) throws IOException {
+        clientSocketObject.setBusy(true);
+
         String filePath = serverDirectory + filename;
         FileInputStream fileInputStream = new FileInputStream(filePath);
 
@@ -222,7 +240,7 @@ class ClientHandler implements Runnable {
         fileInputStream.close();
         objectOutputStream.flush();
 
-        reinitializeConnection();
+        clientSocketObject.setBusy(false);
     }
 
     private void createFolder(String folder) {
@@ -258,13 +276,49 @@ class ClientHandler implements Runnable {
         Collections.sort(clientFiles);
         return clientFiles;
     }
+}
 
-    private void reinitializeConnection() throws IOException {
-        objectOutputStream.close();
-        objectInputStream.close();
-        clientSocket.close();
-        clientSocket = serverSocket.accept();
-        objectOutputStream = new ObjectOutputStream(clientSocket.getOutputStream());
-        objectInputStream = new ObjectInputStream(clientSocket.getInputStream());
+class ClientSocketObject {
+    private final int id;
+    private final Socket socket;
+    private ObjectOutputStream objectOutputStream;
+    private ObjectInputStream objectInputStream;
+    private boolean isBusy = false;
+
+    public ClientSocketObject(int id, Socket socket) throws IOException {
+        this.id = id;
+        this.socket = socket;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public Socket getSocket() {
+        return socket;
+    }
+
+    public ObjectOutputStream getObjectOutputStream() {
+        return objectOutputStream;
+    }
+
+    public void setObjectOutputStream(ObjectOutputStream objectOutputStream) {
+        this.objectOutputStream = objectOutputStream;
+    }
+
+    public ObjectInputStream getObjectInputStream() {
+        return objectInputStream;
+    }
+
+    public void setObjectInputStream(ObjectInputStream objectInputStream) {
+        this.objectInputStream = objectInputStream;
+    }
+
+    public boolean isBusy() {
+        return isBusy;
+    }
+
+    public void setBusy(boolean busy) {
+        isBusy = busy;
     }
 }
