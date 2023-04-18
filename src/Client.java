@@ -5,17 +5,25 @@ import java.util.concurrent.TimeUnit;
 
 public class Client {
     private static final int SERVER_PORT = 5656;
+    private Socket socket;
+    private ServerThread serverThread;
 
     public static void main(String[] args) throws Exception {
         Client client = new Client();
         client.start();
     }
 
-    public void start() throws Exception {
+    private String askWorkingDirectory() throws IOException {
         System.out.println("Enter your working directory:");
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-        String clientDirectory = reader.readLine();
+        return reader.readLine();
+    }
 
+    public void start() throws Exception {
+        start(askWorkingDirectory());
+    }
+
+    public void start(String clientDirectory) throws Exception {
         clientDirectory = clientDirectory.replace("/", "\\");
         if (!clientDirectory.endsWith("\\")) {
             clientDirectory += "\\";
@@ -33,13 +41,24 @@ public class Client {
 
         try {
             System.out.println("Connecting to server...");
-            Socket socket = new Socket("localhost", SERVER_PORT);
+            socket = new Socket("localhost", SERVER_PORT);
             System.out.println("Successfully connected to server!");
 
-            new Thread(new ServerThread(socket, clientDirectory)).start();
+            serverThread = new ServerThread(socket, clientDirectory);
+            new Thread(serverThread).start();
         } catch (ConnectException e) {
             System.out.println("Could not connect to server.");
         }
+    }
+
+    public void stop() throws IOException {
+        if (socket != null) {
+            socket.close();
+        }
+    }
+
+    public ServerThread getServerThread() {
+        return serverThread;
     }
 }
 
@@ -80,7 +99,7 @@ class ServerThread implements Runnable {
         }
     }
 
-    private ArrayList<String> getStackedChanges() throws IOException, ClassNotFoundException {
+    public ArrayList<String> getStackedChanges() throws IOException, ClassNotFoundException {
         objectOutputStream.writeObject("STACKED_CHANGES");
         objectOutputStream.writeObject("");
 
@@ -102,7 +121,7 @@ class ServerThread implements Runnable {
         return stackedChanges;
     }
 
-    private void compareServerFiles() throws IOException, ClassNotFoundException {
+    public void compareServerFiles() throws IOException, ClassNotFoundException {
         objectOutputStream.writeObject("LIST");
         objectOutputStream.writeObject("");
 
@@ -157,7 +176,7 @@ class ServerThread implements Runnable {
         }
     }
 
-    private void checkForChanges() throws IOException, ClassNotFoundException {
+    public void checkForChanges() throws IOException, ClassNotFoundException {
         List<String> toAdd = new ArrayList<>();
         List<String> toDelete = new ArrayList<>();
 
@@ -226,7 +245,7 @@ class ServerThread implements Runnable {
         }
     }
 
-    private void downloadFile(String filename) throws IOException {
+    public void downloadFile(String filename) throws IOException {
         objectOutputStream.writeObject("DOWNLOAD");
         objectOutputStream.flush();
         objectOutputStream.writeObject(filename);
@@ -250,7 +269,7 @@ class ServerThread implements Runnable {
         System.out.println("Downloaded file '" + filename + "' from server.");
     }
 
-    private void uploadFile(String filename) throws IOException {
+    public void uploadFile(String filename) throws IOException {
         String filePath = directory + filename;
         File file = new File(filePath);
 
@@ -288,14 +307,14 @@ class ServerThread implements Runnable {
         System.out.println("Uploaded file '" + filename + "' to server.");
     }
 
-    private void createFolder(String folder) throws IOException {
+    public void createFolder(String folder) throws IOException {
         objectOutputStream.writeObject("CREATE_FOLDER");
         objectOutputStream.writeObject(folder);
 
         System.out.println("Created folder '" + folder + "' from client.");
     }
 
-    private void deleteFile(String filename) throws IOException {
+    public void deleteFile(String filename) throws IOException {
         objectOutputStream.writeObject("DELETE");
         objectOutputStream.writeObject(filename);
 
@@ -303,6 +322,15 @@ class ServerThread implements Runnable {
         file.delete();
 
         System.out.println("Deleted file '" + filename + "' from client.");
+    }
+
+    public boolean checkExistence(String filename) throws IOException {
+        objectOutputStream.writeObject("EXISTS");
+        objectOutputStream.flush();
+        objectOutputStream.writeObject(filename);
+        objectOutputStream.flush();
+
+        return objectInputStream.readBoolean();
     }
 
     public ArrayList<String> getClientFiles(File directory) {

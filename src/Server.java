@@ -5,6 +5,7 @@ import java.util.*;
 public class Server {
     private static final int PORT = 5656;
     private final Map<Integer, ClientSocketObject> clientSockets;
+    private ServerSocket serverSocket;
 
     public Server() {
         clientSockets = new HashMap<>();
@@ -17,13 +18,17 @@ public class Server {
 
     public void start() {
         String serverDirectory = System.getProperty("user.dir") + "\\server-files\\";
+        start(serverDirectory);
+    }
+
+    public void start(String serverDirectory) {
         File file = new File(serverDirectory);
         if (!file.exists()) {
             file.mkdirs();
         }
 
         try {
-            ServerSocket serverSocket = new ServerSocket(PORT);
+            serverSocket = new ServerSocket(PORT);
             System.out.println("Server started. Listening on port " + PORT + "...");
 
             int currentSocketID = 1;
@@ -44,6 +49,12 @@ public class Server {
             System.out.println("Could not start server.");
         } catch (IOException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    public void stop() throws IOException {
+        if (serverSocket != null) {
+            serverSocket.close();
         }
     }
 
@@ -122,6 +133,10 @@ class ClientHandler implements Runnable {
                         case "DELETE":
                             deleteFile(filename);
                             printClientEvent("Deleted: '" + filename + "'", false);
+                            break;
+                        case "EXISTS":
+                            checkExistence(filename);
+                            printClientEvent("Checked existence: '" + filename + "'", false);
                             break;
                     }
                 } catch (SocketException e) {
@@ -279,6 +294,14 @@ class ClientHandler implements Runnable {
         }
 
         appendToStackedChange("DELETE", filename);
+    }
+
+    private void checkExistence(String filename) throws IOException {
+        String filePath = serverDirectory + filename;
+        File file = new File(filePath);
+
+        objectOutputStream.writeBoolean(file.exists());
+        objectOutputStream.flush();
     }
 
     public ArrayList<File> getFiles(File directory) {
