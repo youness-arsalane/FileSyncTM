@@ -7,6 +7,11 @@ public class Client {
     private static final int SERVER_PORT = 5656;
 
     public static void main(String[] args) throws Exception {
+        Client client = new Client();
+        client.start();
+    }
+
+    public void start() throws Exception {
         System.out.println("Enter your working directory:");
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         String clientDirectory = reader.readLine();
@@ -66,10 +71,35 @@ class ServerThread implements Runnable {
             try {
                 checkForChanges();
                 TimeUnit.SECONDS.sleep(intervalSeconds);
-            } catch (IOException | InterruptedException e) {
+            } catch (SocketException e) {
+                System.out.println("Lost connection with server");
+                break;
+            } catch (IOException | InterruptedException | ClassNotFoundException e) {
                 e.printStackTrace();
             }
         }
+    }
+
+    private ArrayList<String> getStackedChanges() throws IOException, ClassNotFoundException {
+        objectOutputStream.writeObject("STACKED_CHANGES");
+        objectOutputStream.writeObject("");
+
+        ArrayList<String> stackedChanges = new ArrayList<>();
+        while (true) {
+            String filenameData = (String) objectInputStream.readObject();
+            if (filenameData.equals("STACKED_CHANGES_END")) {
+                break;
+            }
+
+            stackedChanges.add(filenameData);
+        }
+
+        if (stackedChanges.size() > 0) {
+            System.out.println("Stacked changes:");
+            System.out.println(stackedChanges);
+        }
+
+        return stackedChanges;
     }
 
     private void compareServerFiles() throws IOException, ClassNotFoundException {
@@ -127,7 +157,7 @@ class ServerThread implements Runnable {
         }
     }
 
-    private void checkForChanges() throws IOException {
+    private void checkForChanges() throws IOException, ClassNotFoundException {
         List<String> toAdd = new ArrayList<>();
         List<String> toDelete = new ArrayList<>();
 
@@ -173,6 +203,27 @@ class ServerThread implements Runnable {
         clientFiles.addAll(toAdd);
         clientFiles.removeAll(toDelete);
         Collections.sort(clientFiles);
+
+        ArrayList<String> stackedChanges = getStackedChanges();
+        for (String stackedChange : stackedChanges) {
+            String[] stackedChangeArgs = stackedChange.split(" ");
+            String command = stackedChangeArgs[0];
+            String filename = stackedChangeArgs[1];
+
+            File file = new File(directory + filename);
+            switch (command) {
+                case "DOWNLOAD":
+                    downloadFile(filename);
+                    clientFiles.add(filename);
+                    break;
+                case "CREATE_FOLDER":
+                    file.mkdir();
+                    break;
+                case "DELETE":
+                    file.delete();
+                    break;
+            }
+        }
     }
 
     private void downloadFile(String filename) throws IOException {
@@ -187,8 +238,10 @@ class ServerThread implements Runnable {
         byte[] buffer = new byte[clientSocket.getReceiveBufferSize()];
         int bytesRead;
 
-        while ((bytesRead = objectInputStream.read(buffer)) != -1) {
+        long size = objectInputStream.readLong();
+        while (size > 0 && (bytesRead = objectInputStream.read(buffer, 0, (int) Math.min(buffer.length, size))) != -1) {
             fileOutputStream.write(buffer, 0, bytesRead);
+            size -= bytesRead;
         }
 
         fileOutputStream.flush();

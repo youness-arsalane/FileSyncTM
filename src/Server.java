@@ -52,9 +52,18 @@ public class Server {
     }
 
     public Map<Integer, ClientSocketObject> getOtherClients(int currentClientSocketID) {
-        Map<Integer, ClientSocketObject> clients = getClients();
-        clients.remove(currentClientSocketID);
-        return clients;
+        Map<Integer, ClientSocketObject> otherClients = new HashMap<>();
+
+        for (Map.Entry<Integer, ClientSocketObject> entry : getClients().entrySet()) {
+            Integer key = entry.getKey();
+            if (key == currentClientSocketID) {
+                continue;
+            }
+
+            otherClients.put(key, entry.getValue());
+        }
+
+        return otherClients;
     }
 
     public void removeClient(int clientSocketID) {
@@ -94,6 +103,10 @@ class ClientHandler implements Runnable {
                         case "LIST":
                             listFiles();
                             printClientEvent("Listed files", false);
+                            break;
+                        case "STACKED_CHANGES":
+                            listStackedChanges();
+                            printClientEvent("Sent stacked changes", false);
                             break;
                         case "UPLOAD":
                             receiveFile(filename);
@@ -149,6 +162,25 @@ class ClientHandler implements Runnable {
         }
     }
 
+    private void listStackedChanges() {
+        ArrayList<String> stackedChanges = clientSocketObject.getStackedChanges();
+        for (String stackedChange : stackedChanges) {
+            try {
+                objectOutputStream.writeObject(stackedChange);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        try {
+            objectOutputStream.writeObject("STACKED_CHANGES_END");
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        clientSocketObject.emptyStackedChanges();
+    }
+
     private void receiveFile(String filename) throws IOException {
         printClientEvent("Receiving file '" + filename + "'...", false);
         FileOutputStream fileOutputStream = null;
@@ -189,31 +221,20 @@ class ClientHandler implements Runnable {
             }
         }
 
-//        sendNotificationToOtherClients("DOWNLOAD", filename);
+        appendToStackedChange("DOWNLOAD", filename);
     }
 
-    private void sendNotificationToOtherClients(String command, String filename) throws IOException {
+    private void appendToStackedChange(String command, String filename) {
         Map<Integer, ClientSocketObject> otherClients = server.getOtherClients(clientSocketObject.getId());
-        System.out.println(" - Notifying other clients (" + otherClients.size() + ")...");
+        System.out.println(" - Total clients connected (" + server.getClients().size() + ")...");
+        System.out.println(" - Adding to stacked changes (" + otherClients.size() + ")...");
 
         for (Map.Entry<Integer, ClientSocketObject> entry : otherClients.entrySet()) {
-            Integer key = entry.getKey();
             ClientSocketObject otherClientSocket = entry.getValue();
-            /* TODO: notify other clients to download file */
 
-            while (otherClientSocket.isBusy()) {
-                try {
-                    Thread.sleep(5);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-
-            otherClientSocket.getObjectOutputStream().writeObject(command + " " + filename);
-            otherClientSocket.getObjectOutputStream().flush();
-
-            System.out.println("#" + key.toString());
-            System.out.println(otherClientSocket);
+            String stackedChange = command + " " + filename;
+            otherClientSocket.appendStackedChange(stackedChange);
+            System.out.println("Client #" + otherClientSocket.getId() + " - appended stacked change (" + stackedChange + ")");
         }
     }
 
@@ -225,6 +246,10 @@ class ClientHandler implements Runnable {
 
         byte[] buffer = new byte[clientSocket.getReceiveBufferSize()];
         int bytesRead;
+
+        File file = new File(filePath);
+        objectOutputStream.writeLong(file.length());
+
         while ((bytesRead = fileInputStream.read(buffer)) != -1) {
             objectOutputStream.write(buffer, 0, bytesRead);
         }
@@ -242,6 +267,8 @@ class ClientHandler implements Runnable {
         if (!file.exists() && !file.mkdirs()) {
             System.out.println("Failed to create folder " + folder);
         }
+
+        appendToStackedChange("CREATE_FOLDER", folder);
     }
 
     private void deleteFile(String filename) {
@@ -250,6 +277,8 @@ class ClientHandler implements Runnable {
         if (!file.delete()) {
             System.out.println("Failed to delete file " + filename);
         }
+
+        appendToStackedChange("DELETE", filename);
     }
 
     public ArrayList<File> getFiles(File directory) {
@@ -283,11 +312,13 @@ class ClientSocketObject {
     private final Socket socket;
     private ObjectOutputStream objectOutputStream;
     private ObjectInputStream objectInputStream;
+    private ArrayList<String> stackedChanges;
     private boolean isBusy = false;
 
     public ClientSocketObject(int id, Socket socket) throws IOException {
         this.id = id;
         this.socket = socket;
+        this.stackedChanges = new ArrayList<>();
     }
 
     public int getId() {
@@ -312,6 +343,22 @@ class ClientSocketObject {
 
     public void setObjectInputStream(ObjectInputStream objectInputStream) {
         this.objectInputStream = objectInputStream;
+    }
+
+    public ArrayList<String> getStackedChanges() {
+        return stackedChanges;
+    }
+
+    public void setStackedChanges(ArrayList<String> stackedChanges) {
+        this.stackedChanges = stackedChanges;
+    }
+
+    public void appendStackedChange(String stackedChange) {
+        this.stackedChanges.add(stackedChange);
+    }
+
+    public void emptyStackedChanges() {
+        this.stackedChanges.clear();
     }
 
     public boolean isBusy() {
