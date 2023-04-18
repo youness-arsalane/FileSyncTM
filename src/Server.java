@@ -216,6 +216,7 @@ class ClientHandler implements Runnable {
             fileOutputStream.close();
 
             printClientEvent("Received file '" + filename + "'", false);
+            appendToStackedChange("DOWNLOAD", filename);
 
         } catch (IOException e) {
             if (fileOutputStream != null) {
@@ -235,8 +236,6 @@ class ClientHandler implements Runnable {
                 }
             }
         }
-
-        appendToStackedChange("DOWNLOAD", filename);
     }
 
     private void appendToStackedChange(String command, String filename) {
